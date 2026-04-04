@@ -5,9 +5,23 @@
       <template #title>
         {{ $t('blupdate.title') }}
         <span style="font-weight:normal; font-size:0.9rem; margin-left:8px; color: var(--color-text-3);">
-          {{ $t('global.onStart') }}
+          {{ $t('blupdate.modeNotice') }}
         </span>
       </template>
+
+      <!-- Bootloader mode instruction -->
+      <a-alert type="info" style="margin-bottom:16px">
+        {{ $t('blupdate.howToConnect') }}
+      </a-alert>
+
+      <!-- Wrong protocol warning -->
+      <a-alert
+        v-if="appStore.connectState && appStore.configuration?.uart !== 'losehu'"
+        type="error"
+        style="margin-bottom:16px"
+      >
+        {{ $t('blupdate.wrongProtocol', { version: appStore.firmwareVersion || '?' }) }}
+      </a-alert>
 
       <!-- Step 1: Read slots from device -->
       <a-space direction="vertical" style="width:100%">
@@ -143,6 +157,25 @@ function log(msg: string) {
   });
 }
 
+function errMsg(e: any): string {
+  if (e instanceof Error) return e.message;
+  if (typeof e === 'string') return e;
+  return JSON.stringify(e);
+}
+
+// Read arbitrary byte count from EEPROM in 0x40-byte chunks
+async function readBytes(addr: number, size: number): Promise<Uint8Array> {
+  const out = new Uint8Array(size);
+  let offset = 0;
+  while (offset < size) {
+    const chunk = Math.min(0x40, size - offset);
+    const data = await eeprom_read(appStore.connectPort, addr + offset, chunk, appStore.configuration?.uart);
+    out.set(data.slice(0, chunk), offset);
+    offset += chunk;
+  }
+  return out;
+}
+
 function isEqual(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length !== b.length) return false;
   return a.every((v, i) => v === b[i]);
@@ -160,6 +193,14 @@ async function readSlots() {
     alert(sessionStorage.getItem('noticeConnectK5'));
     return;
   }
+  // Metadata lives at 0x40000+ which requires 32-bit addressing (losehu protocol).
+  // This is only available when the losehu bootloader is running (hold MENU on power-on).
+  if (appStore.configuration?.uart !== 'losehu') {
+    log('ERROR: This tool requires the losehu bootloader to be running.');
+    log('Power off the radio, hold the MENU button, then power on to enter bootloader mode.');
+    log('Then reconnect in k5web — it should show version "L_BL003".');
+    return;
+  }
   state.reading = true;
   state.slots = [];
   state.selectedSlot = null;
@@ -168,7 +209,7 @@ async function readSlots() {
     await eeprom_init(appStore.connectPort);
 
     // 0x40000: firmware count (1 byte)
-    const countBuf = await eeprom_read(appStore.connectPort, 0x40000, 1, appStore.configuration?.uart);
+    const countBuf = await readBytes(0x40000, 1);
     const count = countBuf[0];
     if (count === 0 || count > 64) {
       log('No valid multiboot metadata found. Have you written firmwares via the Multi-booting page?');
@@ -179,7 +220,7 @@ async function readSlots() {
 
     // 0x40020: slot table, 32 bytes per slot
     // Each entry: 16 bytes name + 4 bytes start + 4 bytes end + 8 bytes padding
-    const tableBuf = await eeprom_read(appStore.connectPort, 0x40020, count * 32, appStore.configuration?.uart);
+    const tableBuf = await readBytes(0x40020, count * 32);
 
     const slots = [];
     for (let i = 0; i < count; i++) {
@@ -205,7 +246,7 @@ async function readSlots() {
     }
     state.slots = slots;
   } catch (e: any) {
-    log('Error reading metadata: ' + e.message);
+    log('Error reading metadata: ' + errMsg(e));
   }
   state.reading = false;
 }
@@ -256,6 +297,10 @@ async function writeSlot() {
   if (!state.selectedSlot || !state.newFirmware) return;
   if (appStore.connectState !== true) {
     alert(sessionStorage.getItem('noticeConnectK5'));
+    return;
+  }
+  if (appStore.configuration?.uart !== 'losehu') {
+    log('ERROR: Bootloader mode required. Power off, hold MENU, power on, then reconnect.');
     return;
   }
 
@@ -319,7 +364,7 @@ async function writeSlot() {
     await readSlots();
 
   } catch (e: any) {
-    log('Error: ' + e.message);
+    log('Error: ' + errMsg(e));
   }
   state.writing = false;
 }
