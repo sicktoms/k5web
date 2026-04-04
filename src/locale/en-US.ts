@@ -150,6 +150,8 @@ export default {
   'global.upload': 'Upload',
   'global.loginUpload': '(Login to upload and share)',
   'bl': 'Multi-booting',
+  'bl.modeNotice': '(Power off → hold MENU → power on to enter bootloader mode)',
+  'bl.writeBlOnly': 'Flash bootloader only',
   'bl.numSlots': 'Firmware slots',
   'bl.slotSize': 'Slot capacity',
   'bl.slotBase': 'First slot at',

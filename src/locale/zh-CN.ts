@@ -150,6 +150,8 @@ export default {
   'global.upload': '上传',
   'global.loginUpload': '（登录可上传分享）',
   'bl': '多系统',
+  'bl.modeNotice': '（关机 → 按住 MENU → 开机，进入引导程序模式）',
+  'bl.writeBlOnly': '仅烧录引导程序',
   'bl.numSlots': '固件槽数量',
   'bl.slotSize': '槽容量',
   'bl.slotBase': '起始地址',

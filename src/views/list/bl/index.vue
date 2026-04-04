@@ -7,7 +7,7 @@
           {{ $t('bl.warning') }}
           <span style="font-size: 0.9rem;">【{{ $t('bl.readme') }}<t-link theme="primary" href="https://github.com/losehu/uv-k5-bootloader-custom/releases" target="_blank">https://github.com/losehu/uv-k5-bootloader-custom/releases</t-link>】</span>
         </div>
-        {{ $t('bl') }} {{ $t('global.onStart') }}
+        {{ $t('bl') }} {{ $t('bl.modeNotice') }}
       </template>
 
       <!-- Slot count + write button row -->
@@ -21,7 +21,11 @@
             {{ $t('bl.slotSize') }}: {{ slotSizeKb }} KB &nbsp;·&nbsp; {{ $t('bl.slotBase') }}: 0x44000
           </span>
         </a-col>
-        <a-col :flex="'auto'" style="text-align: right;">
+        <a-col :flex="'auto'" style="text-align: right; display: flex; gap: 8px; justify-content: flex-end;">
+          <a-button :loading="state.writing" @click="writeBootloaderOnly">
+            <template #icon><icon-upload /></template>
+            {{ $t('bl.writeBlOnly') }}
+          </a-button>
           <a-button type="primary" status="danger" :loading="state.writing" @click="writeAll"
             :disabled="!state.slots.some((s:any) => s.firmware)">
             <template #icon><icon-thunderbolt /></template>
@@ -243,6 +247,29 @@ async function writeRange(start: number, data: Uint8Array | number[], remark: st
     }
     log(remark + ' ' + (((i - start) / arr.length) * 100).toFixed(1) + '%');
   }
+}
+
+// ── write bootloader only ────────────────────────────────────────────────────
+async function writeBootloaderOnly() {
+  if (appStore.connectState !== true) { alert(sessionStorage.getItem('noticeConnectK5')); return; }
+  state.writing = true;
+  state.status = '';
+  try {
+    const eepromSize = await check_eeprom(appStore.connectPort, appStore.configuration?.uart);
+    if (eepromSize < 0x80000) {
+      alert('Only 4Mbit (512KB) EEPROM is supported.');
+      state.writing = false;
+      return;
+    }
+    await eeprom_init(appStore.connectPort);
+    log('--- Writing bootloader B only ---');
+    await writeRange(BL_ADDR, state.bl, 'Bootloader');
+    log('--- Done! Rebooting... ---');
+    await eeprom_reboot(appStore.connectPort);
+  } catch (e: any) {
+    log('Error: ' + (e instanceof Error ? e.message : String(e)));
+  }
+  state.writing = false;
 }
 
 // ── write all ────────────────────────────────────────────────────────────────
