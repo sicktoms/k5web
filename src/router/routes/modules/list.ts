@@ -91,6 +91,16 @@ const LIST: AppRouteRecordRaw = {
         requiresAuth: true,
         roles: ['*'],
       },
+    },
+    {
+      path: 'blupdate',
+      name: 'BLUpdate',
+      component: () => import('@/views/list/blupdate/index.vue'),
+      meta: {
+        locale: 'blupdate.title',
+        requiresAuth: true,
+        roles: ['*'],
+      },
     }
   ],
 };
