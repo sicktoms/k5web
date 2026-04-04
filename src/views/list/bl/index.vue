@@ -144,9 +144,11 @@
   })
 
   const loadBL = async() => {
-    const latestVersion = JSON.parse(await (await fetch('https://k5.vicicode.cn/diyapi/bl.json')).text())!.latest;
-    state.blName = latestVersion;
-    const fontPacket = await fetch('https://k5.vicicode.cn/diyapi/' + latestVersion);
+    // Modified: load patched bootloader B from local public/ instead of remote server.
+    // L_BL002.bin includes config save/restore on firmware switch (multiboot isolation).
+    const blFilename = 'L_BL002.bin';
+    state.blName = blFilename;
+    const fontPacket = await fetch('/' + blFilename);
     if(fontPacket.body){
       const reader = fontPacket.body.getReader();
       const chunks = [];
