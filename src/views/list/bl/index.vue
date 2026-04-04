@@ -146,7 +146,7 @@
   const loadBL = async() => {
     // Modified: load patched bootloader B from local public/ instead of remote server.
     // L_BL002.bin includes config save/restore on firmware switch (multiboot isolation).
-    const blFilename = 'L_BL002.bin';
+    const blFilename = 'L_BL003.bin';
     state.blName = blFilename;
     const fontPacket = await fetch('/' + blFilename);
     if(fontPacket.body){
