@@ -77,7 +77,7 @@
             type="error"
             style="margin-top:8px"
           >
-            {{ $t('blupdate.sizeError', { max: ((state.selectedSlot.end - state.selectedSlot.start + 1) / 1024).toFixed(1) }) }}
+            {{ $t('blupdate.sizeError', { max: (state.selectedSlot.capacity / 1024).toFixed(1) }) }}
           </a-alert>
 
           <!-- Name override -->
@@ -222,28 +222,42 @@ async function readSlots() {
     // Each entry: 16 bytes name + 4 bytes start + 4 bytes end + 8 bytes padding
     const tableBuf = await readBytes(0x40020, count * 32);
 
-    const slots = [];
+    // Parse all slot entries first so we can compute inter-slot capacity
+    const raw = [];
     for (let i = 0; i < count; i++) {
       const base = i * 32;
-      // Name: up to 13 bytes, null-terminated
       let name = '';
       for (let j = 0; j < 13; j++) {
         if (tableBuf[base + j] === 0) break;
         name += String.fromCharCode(tableBuf[base + j]);
       }
-      const start = readU32LE(tableBuf, base + 16);
-      const end   = readU32LE(tableBuf, base + 20);
-      slots.push({
-        index: i + 1,
+      raw.push({
         name: name || `Slot ${i + 1}`,
-        start,
-        end,
-        startHex: '0x' + start.toString(16).toUpperCase().padStart(5, '0'),
-        endHex:   '0x' + end.toString(16).toUpperCase().padStart(5, '0'),
-        sizeKb:   ((end - start + 1) / 1024).toFixed(1) + ' KB',
+        start: readU32LE(tableBuf, base + 16),
+        end:   readU32LE(tableBuf, base + 20),
       });
-      log(`Slot ${i+1}: "${name}" @ 0x${start.toString(16).toUpperCase()}–0x${end.toString(16).toUpperCase()} (${((end-start+1)/1024).toFixed(1)} KB)`);
     }
+
+    const slots = raw.map((r, i) => {
+      // Capacity = gap from this slot's start to the next slot's start (or EEPROM end).
+      // This is correct even for tightly-packed slots: a new firmware can use the full
+      // gap, not just what the old firmware happened to occupy.
+      const nextStart = i + 1 < raw.length ? raw[i + 1].start : 0x80000;
+      const capacity = nextStart - r.start;
+      return {
+        index: i + 1,
+        name: r.name,
+        start: r.start,
+        end: r.end,
+        nextStart,
+        capacity,
+        startHex: '0x' + r.start.toString(16).toUpperCase().padStart(5, '0'),
+        endHex:   '0x' + r.end.toString(16).toUpperCase().padStart(5, '0'),
+        sizeKb:   (capacity / 1024).toFixed(1) + ' KB',
+      };
+    });
+
+    slots.forEach(s => log(`Slot ${s.index}: "${s.name}" @ ${s.startHex}–${s.endHex} (capacity ${s.sizeKb})`));
     state.slots = slots;
   } catch (e: any) {
     log('Error reading metadata: ' + errMsg(e));
@@ -278,12 +292,11 @@ function selectFile() {
     state.newFirmware = unpacked;
     state.newName = file.name.replace(/\.bin$/i, '').replace(/[^\x00-\x7f]/g, '').substring(0, 13);
 
-    // Check it fits in the existing slot's address range
-    const slotCapacity = state.selectedSlot.end - state.selectedSlot.start + 1;
+    // Check it fits: capacity = gap from this slot start to next slot start (or EEPROM end)
     const needed = Math.ceil(unpacked.length / 0x40) * 0x40;
-    state.sizeError = needed > slotCapacity;
+    state.sizeError = needed > state.selectedSlot.capacity;
     if (state.sizeError) {
-      log(`ERROR: firmware is ${(needed/1024).toFixed(1)} KB but slot capacity is ${(slotCapacity/1024).toFixed(1)} KB.`);
+      log(`ERROR: firmware is ${(needed/1024).toFixed(1)} KB but slot capacity is ${(state.selectedSlot.capacity/1024).toFixed(1)} KB.`);
     } else {
       log(`Selected: "${file.name}" (${(unpacked.length/1024).toFixed(1)} KB unpacked) → fits in slot ${state.selectedSlot.index}.`);
     }
@@ -312,7 +325,14 @@ async function writeSlot() {
   const padded = new Uint8Array(Math.ceil(firmware.length / 0x40) * 0x40).fill(0xFF);
   padded.set(firmware, 0);
 
+  // newEnd: actual end of written data (not necessarily old slot.end)
   const newEnd = slot.start + padded.length - 1;
+  // Double-check capacity (next slot boundary)
+  if (padded.length > slot.capacity) {
+    log(`ERROR: firmware ${(padded.length/1024).toFixed(1)} KB exceeds slot capacity ${(slot.capacity/1024).toFixed(1)} KB.`);
+    state.writing = false;
+    return;
+  }
 
   log(`--- Writing slot ${slot.index} (was "${slot.name}") ---`);
   log(`Target address: 0x${slot.start.toString(16).toUpperCase()}–0x${newEnd.toString(16).toUpperCase()}`);
