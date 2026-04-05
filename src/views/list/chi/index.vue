@@ -56,7 +56,7 @@ import { eeprom_write, eeprom_reboot, eeprom_init, check_eeprom } from '@/utils/
 const appStore = useAppStore();
 
 const state = reactive({
-  status: "点击写入按钮写入字库到设备<br/><br/>",
+  status: "Click a write button to upload the character set to the device.<br/><br/>",
   eepromType: "",
   showHide: 0,
   lang: 'Simplified_Chinese'
@@ -66,13 +66,13 @@ const restoreRange = async (start: any = 0, uint8Array: any) => {
   await eeprom_init(appStore.connectPort);
   for (let i = start; i < uint8Array.length + start; i += 0x40) {
     await eeprom_write(appStore.connectPort, i, uint8Array.slice(i - start, i - start + 0x40), uint8Array.slice(i - start, i - start + 0x40).length, appStore.configuration?.uart);
-    state.status = state.status + "写入进度：" + (((i - start) / uint8Array.length) * 100).toFixed(1) + "%<br/>";
+    state.status = state.status + "Writing: " + (((i - start) / uint8Array.length) * 100).toFixed(1) + "%<br/>";
     nextTick(()=>{
       const textarea = document?.getElementById('statusArea');
       if(textarea)textarea.scrollTop = textarea?.scrollHeight;
     })
   }
-  state.status = state.status + "写入进度：100.0%<br/>";
+  state.status = state.status + "Writing: 100.0%<br/>";
   await eeprom_reboot(appStore.connectPort);
 }
 
@@ -82,7 +82,7 @@ const restore = async(type: any = 1) => {
     alert(sessionStorage.getItem('noticeVersionNoSupport'));
     return;
   }
-  state.status = state.status + "正在下载字库...<br />"
+  state.status = state.status + "Downloading character set...<br />"
   let fontPacket = undefined
   if(type == 4){
     if(appStore.configuration?.newpinyin){
@@ -106,7 +106,7 @@ const restore = async(type: any = 1) => {
   if(type == 5){
     const eepromSize = await check_eeprom(appStore.connectPort, appStore.configuration?.uart);
     if(eepromSize != 0x40000 && eepromSize != 0x80000){
-      state.status = state.status + "只支持 2Mbit 以上 EEPROM 写入<br/>";
+      state.status = state.status + "Only 2Mbit (256KB) or larger EEPROM is supported for this operation.<br/>";
       return
     }
     fontPacket = await fetch('/ssb.bin')
@@ -171,7 +171,7 @@ const restore = async(type: any = 1) => {
       await restoreRange(0x02480, binary)
       return;
     }else{
-      alert('不支持的版本')
+      alert('Unsupported firmware version.')
     }
   }
 }

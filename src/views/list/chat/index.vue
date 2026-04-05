@@ -3,13 +3,13 @@
         <Breadcrumb :items="[$t('menu.list'), $t('menu.flash')]" />
         <a-card class="general-card">
             <template #title>
-                【无法正常使用】【开发中！！！】无线电聊天（需使用<a-link @click="downloadFirmware">这个</a-link>固件）
+                [UNAVAILABLE] [WORK IN PROGRESS] Radio Chat (requires <a-link @click="downloadFirmware">this</a-link> firmware)
             </template>
             <div style="display: flex; align-items: center; margin: 10px;">
-                <span>呼号：</span>
+                <span>Callsign:</span>
                 <a-input v-model="state.callsign" style="width: 200px !important;" />
                 &nbsp;&nbsp;&nbsp;
-                <span>设备号：</span>
+                <span>Device ID:</span>
                 <a-input-number :min="0" :max="15" v-model="state.devid"
                     style="width: 200px !important;"></a-input-number>
                 &nbsp;&nbsp;&nbsp;
@@ -30,7 +30,7 @@
             </div>
             <a-input :disabled="!state.connect" v-model="state.sendInput" @keyup.enter="sendMsg">
                 <template #append>
-                    <a-link :disabled="!state.connect" @click="sendMsg">发送</a-link>
+                    <a-link :disabled="!state.connect" @click="sendMsg">Send</a-link>
                 </template>
             </a-input>
         </a-card>
@@ -66,7 +66,7 @@ const state: {
     devid: parseInt(sessionStorage.getItem('devid') || "0"),
     connect: false,
     reader: null,
-    startChat: '开始聊天'
+    startChat: 'Start Chat'
 })
 
 watch(() => state.callsign, (n, o) => { sessionStorage.setItem('callsign', n) })
@@ -120,7 +120,7 @@ function hexToUtf8String(hex: string) {
 const sendMsg = async () => {
     if (state.sendInput.trim() == "") return
     if (!validateCallsign(state.callsign.trim())) {
-        Message.error('请输入正确的呼号')
+        Message.error('Please enter a valid callsign')
         return
     }
     sendSMSPacket(appStore.connectPort,"START:" + state.callsign.trim() + ":" + state.devid + ":" + stringToUtf8Hex(state.sendInput.trim()) + ":END")
@@ -137,13 +137,13 @@ const connectIt = async () => {
     if(state.connect){
         state.connect = false
         state.reader.releaseLock();
-        state.startChat = '开始聊天'
+        state.startChat = 'Start Chat'
     }else{
         if (appStore.connectState != true) { alert(sessionStorage.getItem('noticeConnectK5')); return; };
         await eeprom_init(appStore.connectPort);
         state.reader = readSMSPacket(appStore.connectPort);
         asyncMsg(state.reader)
-        state.startChat = '断开聊天'
+        state.startChat = 'Disconnect'
         state.connect = true
     }
 }
@@ -181,7 +181,7 @@ const asyncMsg = async (reader: any) => {
             console.log('已断开')
             state.connect = false
             state.reader.releaseLock();
-            state.startChat = '开始聊天'
+            state.startChat = 'Start Chat'
             break;
         }
     }

@@ -1,6 +1,6 @@
 <template>
   <div class="container">
-    <t-message v-if="progress > 0" theme="loading" class="midMessage">正在执行中({{progress}}%)</t-message>
+    <t-message v-if="progress > 0" theme="loading" class="midMessage">Executing ({{progress}}%)</t-message>
     <a-modal v-model:visible="istate.showNotice" @ok="writeChannel" @cancel="istate.showNotice = false">
       <template #title>
         {{ $t('menu.cps.writeNoticeTitle') }}
@@ -35,15 +35,15 @@
           <a-space>
             <a-dropdown v-if="istate.showHide >= 5">
               <a-button>
-                保存/加载（已废弃）<icon-down />
+                Save/Load (deprecated)<icon-down />
               </a-button>
               <template #content>
                 <a-button style="width: 200px; margin: 10px; margin-bottom: 0px;" type="primary" @click="saveChannel">
-                  保存
+                  Save
                 </a-button>
                 <br>
                 <a-button style="width: 200px; margin: 10px;" @click="restoreChannel">
-                  加载
+                  Load
                 </a-button>
               </template>
             </a-dropdown>

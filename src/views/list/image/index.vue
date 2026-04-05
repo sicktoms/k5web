@@ -3,7 +3,7 @@
     <Breadcrumb :items="[$t('menu.list'), $t('menu.image')]" />
     <a-row :gutter="20" align="stretch">
       <a-col :span="24">
-        <a-spin :loading="state.loading" tip="写入中..." style="width: 100%;">
+        <a-spin :loading="state.loading" tip="Writing..." style="width: 100%;">
           <a-card class="general-card" :title="$t('menu.image') + $t('global.onStart')">
             <div id="canvasDiv" style="zoom: 250%; display: none"></div>
             <div>
@@ -14,7 +14,7 @@
               </table>
             </div>
             <br>
-            色彩阈值：<t-slider v-model="state.threshold" :max="256" style="width: 200px;" @change-end="changeThreshold" />
+            Colour threshold: <t-slider v-model="state.threshold" :max="256" style="width: 200px;" @change-end="changeThreshold" />
             <br>
             <a-space>
               <a-button @click="selectFile">{{ $t('tool.selectImage') }}</a-button>

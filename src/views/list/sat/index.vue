@@ -23,11 +23,11 @@
     <a-row :gutter="20" align="stretch">
       <a-col :span="24">
         <a-card class="general-card" :title="$t('menu.satellite') + $t('global.onStart')">
-          <a-spin :loading="loading" style="width: 100%;" tip="正在处理 ...">
+          <a-spin :loading="loading" style="width: 100%;" tip="Processing...">
             <a-form-item :label-col-style="{ width: '25%' }" field="dt" :label="$t('tool.brtime')" @click="()=>{state.showHide += 1}">
               {{ state.dt }}
             </a-form-item>
-            <a-form-item v-show="state.showHide >= 5" :label-col-style="{ width: '25%' }" field="dtCustom" label="自定义时间">
+            <a-form-item v-show="state.showHide >= 5" :label-col-style="{ width: '25%' }" field="dtCustom" label="Custom time">
               <div>
                 <a-date-picker
                 style="width: 220px; margin: 0 24px 24px 0;"
@@ -36,7 +36,7 @@
                 format="YYYY-MM-DD HH:mm:ss"
                 v-model="state.dtCustom"
               />
-              &nbsp;&nbsp;<t-button size="small" theme="success" @click="writeTime">写入时间到台站</t-button>
+              &nbsp;&nbsp;<t-button size="small" theme="success" @click="writeTime">Write time to radio</t-button>
               </div>
             </a-form-item>
             <a-form-item :label-col-style="{ width: '25%' }" field="sat" :label="$t('tool.selectSatellite')">
@@ -69,7 +69,7 @@
                   :value="item[0] + '|' + item[1]">{{ item[0] + " - " + item[1] }}</a-option>
               </a-select>
             </a-form-item>
-            <a-form-item v-show="state.showHide >= 5" :label-col-style="{ width: '25%' }" field="passCustom" label="自定义过境时间">
+            <a-form-item v-show="state.showHide >= 5" :label-col-style="{ width: '25%' }" field="passCustom" label="Custom pass time">
               <a-range-picker
                 style="width: 360px; margin: 0 24px 24px 0;"
                 show-time
@@ -155,7 +155,7 @@ const state: {
   qrcode: '',
   visible: false,
   showHide: 0,
-  status: "点击写入按钮写入卫星数据到设备<br/><br/>",
+  status: "Click Write to upload satellite data to the device.<br/><br/>",
   sat: '',
   satData: [],
   lng: 0,
@@ -245,7 +245,7 @@ const syncTime = async () => {
 const changeSat = async (sat: any) => {
   const data = state.satData.find(e => e.name == sat);
   if (data && data.path) {
-    state.status += '<br/>卫星参数：<br/>'
+    state.status += '<br/>Satellite parameters:<br/>'
     data.path.map((e: string) => {
       state.status += e + '<br/>'
     })
@@ -350,17 +350,17 @@ const restoreRange = async (start: any = 0, uint8Array: any) => {
   await eeprom_init(appStore.connectPort);
   for (let i = start; i < uint8Array.length + start; i += 0x40) {
     await eeprom_write(appStore.connectPort, i, uint8Array.slice(i - start, i - start + 0x40), 0x40, appStore.configuration?.uart);
-    state.status = state.status + "写入进度：" + (((i - start) / uint8Array.length) * 100).toFixed(1) + "%<br/>";
+    state.status = state.status + "Writing: " + (((i - start) / uint8Array.length) * 100).toFixed(1) + "%<br/>";
     nextTick(() => {
       const textarea = document?.getElementById('statusArea');
       if (textarea) textarea.scrollTop = textarea?.scrollHeight;
     })
   }
-  state.status = state.status + "写入进度：100.0%<br/>";
+  state.status = state.status + "Writing: 100.0%<br/>";
 }
 
 const getPass = async () => {
-  if (!state.sat) { alert('请选择卫星！'); return; };
+  if (!state.sat) { alert('Please select a satellite!'); return; };
   setLoading(true)
   const res = await (await fetch('https://k5.vicicode.cn/api/pass', {
     method: "POST",
@@ -405,11 +405,11 @@ const writeIt = async () => {
     alert(sessionStorage.getItem('noticeVersionNoSupport'));
     return;
   }
-  if (!state.sat) { alert('请选择卫星！'); return; };
+  if (!state.sat) { alert('Please select a satellite!'); return; };
   if(state.passCustom){
     state.pass = state.passCustom[0] + "|" + state.passCustom[1]
   }
-  if (!state.pass) { alert('请选择过境时间！'); return; };
+  if (!state.pass) { alert('Please select a pass time!'); return; };
   setLoading(true)
   const res = await (await fetch('https://k5.vicicode.cn/api/doppler', {
     method: "POST",

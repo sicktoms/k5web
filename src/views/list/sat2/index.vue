@@ -23,18 +23,18 @@
     <a-row :gutter="20" align="stretch">
       <a-col :span="24">
         <a-card class="general-card" :title="$t('menu.satellite2') + $t('global.onStart')">
-          <a-spin :loading="loading" style="width: 100%;" tip="正在处理 ...">
+          <a-spin :loading="loading" style="width: 100%;" tip="Processing...">
             <a-form-item :label-col-style="{ width: '25%' }" field="dt" :label="$t('tool.brtime')"
               @click="() => { state.showHide += 1 }">
               {{ state.dt }}
             </a-form-item>
             <a-form-item v-show="state.showHide >= 5" :label-col-style="{ width: '25%' }" field="dtCustom"
-              label="自定义时间">
+              label="Custom time">
               <div>
                 <a-date-picker style="width: 220px; margin: 0 24px 24px 0;" show-time
                   :time-picker-props="{ defaultValue: '00:00:00' }" format="YYYY-MM-DD HH:mm:ss"
                   v-model="state.dtCustom" />
-                &nbsp;&nbsp;<t-button size="small" theme="success" @click="writeTime">写入时间到台站</t-button>
+                &nbsp;&nbsp;<t-button size="small" theme="success" @click="writeTime">Write time to radio</t-button>
               </div>
             </a-form-item>
             <a-form-item :label-col-style="{ width: '25%' }" field="sat" :label="$t('tool.selectSatellite')">
@@ -117,7 +117,7 @@ const state: {
   qrcode: '',
   visible: false,
   showHide: 0,
-  status: "点击写入按钮写入卫星数据到设备<br/><br/>",
+  status: "Click Write to upload satellite data to the device.<br/><br/>",
   sat: '',
   satData: [],
   lng: 0,
@@ -198,11 +198,11 @@ const tableRef = ref();
 
 const columns = computed(() => [
   {
-    title: '卫星名称',
+    title: 'Satellite Name',
     colKey: 'satName',
   },
   {
-    title: '上行频率',
+    title: 'Uplink Freq',
     colKey: 'txFreq',
     align: 'left',
     edit: {
@@ -234,13 +234,13 @@ const columns = computed(() => [
         console.log('Edit firstName:', context);
       },
       rules: [
-        { required: true, message: '不能为空' },
+        { required: true, message: 'Required' },
       ],
       defaultEditable: true,
     },
   },
   {
-    title: '上行亚音',
+    title: 'Uplink Tone',
     colKey: 'txTone',
     edit: {
       component: Select,
@@ -264,7 +264,7 @@ const columns = computed(() => [
     },
   },
   {
-    title: '下行频率',
+    title: 'Downlink Freq',
     colKey: 'rxFreq',
     align: 'left',
     edit: {
@@ -296,13 +296,13 @@ const columns = computed(() => [
         console.log('Edit firstName:', context);
       },
       rules: [
-        { required: true, message: '不能为空' },
+        { required: true, message: 'Required' },
       ],
       defaultEditable: true,
     },
   },
   {
-    title: '下行亚音',
+    title: 'Downlink Tone',
     colKey: 'rxTone',
     edit: {
       component: Select,
@@ -378,7 +378,7 @@ const syncTime = async () => {
 const changeSat = async (sat: any) => {
   const data = state.satData.find(e => e.name == sat);
   if (data && data.path) {
-    state.status += '<br/>卫星参数：<br/>'
+    state.status += '<br/>Satellite parameters:<br/>'
     data.path.map((e: string) => {
       state.status += e + '<br/>'
     })
@@ -469,13 +469,13 @@ const restoreRange = async (start: any = 0, uint8Array: any) => {
   await eeprom_init(appStore.connectPort);
   for (let i = start; i < uint8Array.length + start; i += 0x40) {
     await eeprom_write(appStore.connectPort, i, uint8Array.slice(i - start, i - start + 0x40), 0x40, appStore.configuration?.uart);
-    state.status = state.status + "写入进度：" + (((i - start) / uint8Array.length) * 100).toFixed(1) + "%<br/>";
+    state.status = state.status + "Writing: " + (((i - start) / uint8Array.length) * 100).toFixed(1) + "%<br/>";
     nextTick(() => {
       const textarea = document?.getElementById('statusArea');
       if (textarea) textarea.scrollTop = textarea?.scrollHeight;
     })
   }
-  state.status = state.status + "写入进度：100.0%<br/>";
+  state.status = state.status + "Writing: 100.0%<br/>";
 }
 
 const restoreRangeShared = async (start: number, uint8Array: Uint8Array) => {
@@ -483,13 +483,13 @@ const restoreRangeShared = async (start: number, uint8Array: Uint8Array) => {
   for (let i = 0; i < uint8Array.length; i += 0x40) {
     const chunk = uint8Array.slice(i, i + 0x40);
     await shared_write(appStore.connectPort, start + i, chunk, chunk.length);
-    state.status = state.status + "写入进度：" + ((i / uint8Array.length) * 100).toFixed(1) + "%<br/>";
+    state.status = state.status + "Writing: " + ((i / uint8Array.length) * 100).toFixed(1) + "%<br/>";
     nextTick(() => {
       const textarea = document?.getElementById('statusArea');
       if (textarea) textarea.scrollTop = textarea?.scrollHeight;
     })
   }
-  state.status = state.status + "写入进度：100.0%<br/>";
+  state.status = state.status + "Writing: 100.0%<br/>";
 }
 
 const calculateChecksum = (line: string) => {
@@ -527,10 +527,10 @@ const writeIt = async () => {
     payload.set(stringToUint8Array(sat.satName).subarray(0,9), i * 160)
     // 第一行
     payload.set(stringToUint8Array(sat.line[0]).subarray(0,69), i * 160 + 9)
-    if(!validateChecksum(sat.line[0]))errs += `第 ${i + 1} 行卫星星历第一行数据错误；`
-    // 第二行
+    if(!validateChecksum(sat.line[0]))errs += `Row ${i + 1}: TLE line 1 checksum error; `
+    // Line 2
     payload.set(stringToUint8Array(sat.line[1]).subarray(0,69), i * 160 + 9 + 69)
-    if(!validateChecksum(sat.line[1]))errs += `第 ${i + 1} 行卫星星历第二行数据错误；`
+    if(!validateChecksum(sat.line[1]))errs += `Row ${i + 1}: TLE line 2 checksum error; `
     // 上行亚音
     const _txTone = new Uint8Array(2)
     if (sat.txTone && sat.txTone > 0) {
@@ -547,12 +547,12 @@ const writeIt = async () => {
     const _tx = new Uint8Array(4)
     _tx.set(hexReverseStringToUint8Array(parseInt(((sat.txFreq * 1000000) / 10).toFixed(0)).toString(16)))
     payload.set(_tx, i * 160 + 9 + 69 + 69 + 2 + 2)
-    if(parseInt(((sat.txFreq * 1000000) / 10).toFixed(0)) == 0)errs += `第 ${i + 1} 行卫星缺少上行频率；`
+    if(parseInt(((sat.txFreq * 1000000) / 10).toFixed(0)) == 0)errs += `Row ${i + 1}: missing uplink frequency; `
     // 下行频率
     const _rx = new Uint8Array(4)
     _rx.set(hexReverseStringToUint8Array(parseInt(((sat.rxFreq * 1000000) / 10).toFixed(0)).toString(16)))
     payload.set(_rx, i * 160 + 9 + 69 + 69 + 2 + 2 + 4)
-    if(parseInt(((sat.rxFreq * 1000000) / 10).toFixed(0)) == 0)errs += `第 ${i + 1} 行卫星缺少下行频率；`
+    if(parseInt(((sat.rxFreq * 1000000) / 10).toFixed(0)) == 0)errs += `Row ${i + 1}: missing downlink frequency; `
   }
   if(errs != ""){
     setLoading(false)
@@ -562,7 +562,7 @@ const writeIt = async () => {
     });
   }
   if (isUveDevice.value) {
-    state.status += `检测到 UVE 设备：将写入 shared@0x${UVE5_SHARED_TLE_BASE.toString(16)}<br/>`;
+    state.status += `UVE device detected: writing to shared@0x${UVE5_SHARED_TLE_BASE.toString(16)}<br/>`;
     await restoreRangeShared(UVE5_SHARED_TLE_BASE, payload)
 
     // Read-back verify first record so users immediately know whether the shared write actually landed.
@@ -572,20 +572,20 @@ const writeIt = async () => {
       if (!chk.ok) {
         setLoading(false)
         return Message.error({
-          content: `写入完成但读回校验失败：${chk.reason}。这通常表示 shared 分区不可用（分区表没刷/label 不匹配）或固件未支持 shared 读写命令。\n\n如果你是用 app0_main 的快速上传刷机：请确保 partitions.bin 也被写入（本仓库 scripts/upload_app0.py 已改为同时刷 partitions.bin@0x8000）。或者完整刷一次 factory/分区表后再重试。`,
+          content: `Write completed but readback verification failed: ${chk.reason}. This usually means the shared partition is unavailable (partition table not flashed / label mismatch) or the firmware does not support shared read/write commands.\n\nIf you flashed via app0_main quick-upload: ensure partitions.bin was also written (scripts/upload_app0.py in this repo now flashes partitions.bin@0x8000 simultaneously). Or do a full factory/partition-table flash and retry.`,
           duration: 12 * 1000,
         });
       }
-      state.status += `读回校验通过：${chk.name}<br/>`;
+      state.status += `Readback verification passed: ${chk.name}<br/>`;
     } catch (e: any) {
       setLoading(false)
       return Message.error({
-        content: `写入完成但读回校验异常：${e?.message ?? e}。可能固件不支持 shared_read/shared_write。`,
+        content: `Write completed but readback verification exception: ${e?.message ?? e}. The firmware may not support shared_read/shared_write.`,
         duration: 12 * 1000,
       });
     }
   } else {
-    state.status += `非 UVE 设备：将写入 EEPROM@0x1E200<br/>`;
+    state.status += `Non-UVE device: writing to EEPROM@0x1E200<br/>`;
     await restoreRange(0x1E200, payload)
   }
   await eeprom_reboot(appStore.connectPort);

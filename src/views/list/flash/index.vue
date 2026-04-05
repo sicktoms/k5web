@@ -22,7 +22,7 @@
           <a-divider />
           <div style="margin-bottom: 12px;">
             <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-              <div style="color: var(--color-text-2);">进度条</div>
+              <div style="color: var(--color-text-2);">Progress</div>
               <div style="color: var(--color-text-1); font-weight: bold;">{{ state.progress.toFixed(1) }}%</div>
             </div>
             <a-progress :percent="state.progress / 100" :show-text="false" />
@@ -54,7 +54,7 @@ const state : {
   phase: string,
   isFlashing: boolean
 } = reactive({
-  status: "点击更新按钮更新固件到设备<br/><br/>",
+  status: "Click the Flash button to update the firmware on the device.<br/><br/>",
   binaryFile: undefined,
   binaryName: '',
   protocol: 'Official',
@@ -85,11 +85,11 @@ onMounted(async ()=>{
   }
   const confirmDialog = DialogPlugin.confirm({
     theme: 'danger',
-    header: '提示',
-    body: '泉盛 K5/K6 当前在售两个硬件版本，如使用第三方固件请先与商家确认可以升级到第三方固件。',
+    header: 'Warning',
+    body: 'The Quansheng UV-K5/K6 is sold in two hardware revisions. If you are using third-party firmware, confirm with your seller that your unit supports custom firmware before flashing.',
     className: 't-dialog-new-class1 t-dialog-new-class2',
     style: 'color: rgba(0, 0, 0, 0.6)',
-    confirmBtn: '我知道了',
+    confirmBtn: 'Got it',
     cancelBtn: null,
     closeBtn: false,
     onConfirm: () => { confirmDialog.destroy() },
@@ -112,7 +112,7 @@ const selectFile = () => {
 
 const flashIt = async () => {
   if(!state.binaryFile){
-    alert('请选择文件');
+    alert('Please select a firmware file first.');
     return;
   }
 
@@ -154,13 +154,13 @@ const flashIt = async () => {
   try {
     _connect = await connect(baudRate);
     if(!_connect){
-      appendStatus('串口连接失败');
+      appendStatus('Serial connection failed.');
       return;
     }
 
     if(state.protocol === 'UVE5'){
-      state.phase = '刷写中...';
-      appendStatus('UVE5：开始刷写（115200bps）');
+      state.phase = 'Flashing...';
+      appendStatus('UVE5: Starting flash (115200bps)');
       let lastLoggedPctInt = -1;
       await uve5_flashFirmware(_connect, state.binaryFile, {
         onLog: (msg: string) => {
@@ -170,19 +170,19 @@ const flashIt = async () => {
           const pct = total > 0 ? (sent / total) * 100 : 0;
           const pctFixed = Math.min(100, Math.max(0, Number(pct.toFixed(1))));
           state.progress = pctFixed;
-          state.phase = `刷写中... ${pctFixed.toFixed(1)}%`;
+          state.phase = `Flashing... ${pctFixed.toFixed(1)}%`;
 
-          // 避免刷屏：只在整数百分比变化时输出一次（以及 0%/100%）
+          // Only log on integer percentage change to avoid flooding the status log
           const pctInt = Math.floor(pctFixed);
           if (pctInt !== lastLoggedPctInt || pctInt === 0 || pctInt === 100) {
             lastLoggedPctInt = pctInt;
-            appendStatus(`更新进度 ${pctFixed.toFixed(1)}%`);
+            appendStatus(`Progress: ${pctFixed.toFixed(1)}%`);
           }
         }
       })
       state.progress = 100;
-      state.phase = '完成';
-      appendStatus('UVE5：固件刷写完成');
+      state.phase = 'Done';
+      appendStatus('UVE5: Firmware flash complete.');
       return;
     }
 
@@ -200,7 +200,7 @@ const flashIt = async () => {
       await sendPacket(_connect, _data);
       await readPacketNoVerify(_connect);
     }else{
-      await sendPacket(_connect, [48,5,16,0,42,79,69,70,87,45,76,79,83,69,72,85,0,0,0,0]); // 发送固定握手数据
+      await sendPacket(_connect, [48,5,16,0,42,79,69,70,87,45,76,79,83,69,72,85,0,0,0,0]); // send fixed handshake packet
       await readPacket(_connect, 0x18);
     }
   }
@@ -208,7 +208,7 @@ const flashIt = async () => {
   const firmware = unpack(state.binaryFile);
   
   if (firmware.length > 0xf000 && state.protocol == 'Official') {
-    alert('最后的边界检查失败。不管是谁修改了代码，他都是个白痴。');
+    alert('Boundary check failed: firmware too large for Official protocol (max 0xF000 bytes).');
     throw new Error('Last resort boundary check failed. Whoever touched the code is an idiot.');
   }
 
@@ -232,17 +232,17 @@ const flashIt = async () => {
           return Promise.reject(e);
       }
 
-      appendStatus(`更新进度 ${((i / firmware.length) * 100).toFixed(1)}%`)
+      appendStatus(`Progress: ${((i / firmware.length) * 100).toFixed(1)}%`)
       state.progress = Math.min(100, Math.max(0, Number((((i / firmware.length) * 100)).toFixed(1))));
   }
-  appendStatus("更新进度 100.0%");
+  appendStatus("Progress: 100.0%");
   state.progress = 100;
-  appendStatus("固件更新成功");
+  appendStatus("Firmware flashed successfully.");
   flushStatus();
   }
   catch(e: any){
-    state.phase = '失败';
-    appendStatus(`${state.protocol}：失败 - ${e?.message ?? e}`);
+    state.phase = 'Failed';
+    appendStatus(`${state.protocol}: Failed — ${e?.message ?? e}`);
     flushStatus();
   }
   finally {

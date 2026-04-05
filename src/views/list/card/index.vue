@@ -60,7 +60,7 @@ import { check_eeprom, eeprom_read, eeprom_write, eeprom_reboot, eeprom_init } f
 const appStore = useAppStore();
 
 const state = reactive({
-  status: "点击备份按钮将生成 EEPROM 备份文件<br/><br/>",
+  status: "Click a backup button to generate an EEPROM backup file.<br/><br/>",
   eepromType: "",
   showHide: 0,
   startInfo: "0x00",
@@ -112,7 +112,7 @@ const clearEEPROM = async () => {
   let rawEEPROM = new Uint8Array(0x40).fill(0xff);
   for (let i = 0; i < eepromSize; i += 0x40) {
     await eeprom_write(appStore.connectPort, i, rawEEPROM, 0x40, appStore.configuration?.uart);
-    state.status = state.status + "清空进度：" + (((i - 0) / eepromSize) * 100).toFixed(1) + "%<br/>";
+    state.status = state.status + "Clearing: " + (((i - 0) / eepromSize) * 100).toFixed(1) + "%<br/>";
     nextTick(()=>{
       const textarea = document?.getElementById('statusArea');
       if(textarea)textarea.scrollTop = textarea?.scrollHeight;
@@ -127,13 +127,13 @@ const backupRange = async (start: any, end: any, name: any = new Date() + '_back
   for (let i = start; i < end; i += 0x40) {
     const data = await eeprom_read(appStore.connectPort, i, 0x40, appStore.configuration?.uart);
     rawEEPROM.set(data, i - start);
-    state.status = state.status + "备份进度：" + (((i - start) / rawEEPROM.length) * 100).toFixed(1) + "%<br/>";
+    state.status = state.status + "Backup: " + (((i - start) / rawEEPROM.length) * 100).toFixed(1) + "%<br/>";
     nextTick(()=>{
       const textarea = document?.getElementById('statusArea');
       if(textarea)textarea.scrollTop = textarea?.scrollHeight;
     })
   }
-  state.status = state.status + "备份进度：100.0%<br/>";
+  state.status = state.status + "Backup: 100.0%<br/>";
   nextTick(()=>{
     const textarea = document?.getElementById('statusArea');
     if(textarea)textarea.scrollTop = textarea?.scrollHeight;
@@ -160,13 +160,13 @@ const restoreRange = async (start: any = 0) => {
     const rawEEPROM = new Uint8Array(await blob.arrayBuffer());
     for (let i = start; i < input.files[0].size + start; i += 0x40) {
       await eeprom_write(appStore.connectPort, i, rawEEPROM.slice(i - start, i - start + 0x40), rawEEPROM.slice(i - start, i - start + 0x40).length, appStore.configuration?.uart);
-      state.status = state.status + "恢复进度：" + (((i - start) / input.files[0].size) * 100).toFixed(1) + "%<br/>";
+      state.status = state.status + "Restore: " + (((i - start) / input.files[0].size) * 100).toFixed(1) + "%<br/>";
       nextTick(()=>{
         const textarea = document?.getElementById('statusArea');
         if(textarea)textarea.scrollTop = textarea?.scrollHeight;
       })
     }
-    state.status = state.status + "恢复进度：100.0%<br/>";
+    state.status = state.status + "Restore: 100.0%<br/>";
     await eeprom_reboot(appStore.connectPort);
   };
   input.click();
@@ -213,7 +213,7 @@ const backup = async() => {
       _max = 0x2000;
   }
   if(appStore.configuration?.uart == "official" && _max >= 0x20000){
-    alert('该固件不支持备份扩容空间');
+    alert('This firmware does not support backup of extended EEPROM space.');
     return;
   }
   await backupRange(0, _max)
