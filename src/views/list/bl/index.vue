@@ -10,18 +10,20 @@
       </template>
 
       <div class="zone-header">
-        <span class="zone-badge mgmt-badge">Management</span>
+        <span class="zone-badge mgmt-badge">Management{{ device.slots.some((s:any) => s.start < FW_BASE) ? ' · Zone A FW' : '' }}</span>
         <span class="zone-addr">0x00000 – 0x43FFF</span>
       </div>
       <div class="map-bar">
         <div
           v-for="(r, i) in mapMgmt"
           :key="'m'+i"
-          class="map-seg"
+          :class="['map-seg', r.slotIdx != null ? 'clickable' : '']"
           :style="{ flex: r.flex, background: r.color }"
           @mouseenter="hovered = r"
           @mouseleave="hovered = null"
+          @click="r.slotIdx != null && scrollToSlot(r.slotIdx)"
         >
+          <div v-if="r.fillPct > 0" class="fw-fill" :style="{ width: r.fillPct + '%', background: r.color }" />
           <span v-if="r.flex >= 90" class="seg-label">{{ r.short }}</span>
         </div>
       </div>
@@ -78,7 +80,7 @@
       <template v-if="phase === 'idle'">
         <a-alert type="info" style="margin-bottom:16px;">
           Power off the radio → hold <strong>MENU</strong> → power on → connect here.
-          The firmware version shown should be <strong>L_BL003</strong> (or similar).
+          The firmware version shown should be <strong>L_BL005</strong> (or similar).
           Do <em>not</em> use Quansheng programming mode (PTT + power on) —
           it doesn't support the 32-bit EEPROM addressing needed to read the slot table.
         </a-alert>
@@ -114,10 +116,17 @@
               <template #icon><icon-refresh /></template>
               Re-read
             </a-button>
-            <a-button :loading="writing" @click="writeBootloaderOnly">
+            <a-button :loading="writing" @click="writeBootloaderOnly" :disabled="!bl">
               <template #icon><icon-upload /></template>
               Flash bootloader only
             </a-button>
+            <a-button @click="loadCustomBL" :disabled="writing">
+              <template #icon><icon-file /></template>
+              Load custom BL
+            </a-button>
+            <span v-if="blName" style="font-size:0.82rem; color:var(--color-text-3); align-self:center;">
+              <a-tag :color="blIsCustom ? 'orange' : 'blue'" size="small">{{ blName }}</a-tag>
+            </span>
             <a-button
               :type="fullReconfig ? 'primary' : 'outline'"
               :status="fullReconfig ? 'warning' : 'normal'"
@@ -129,6 +138,31 @@
             </a-button>
           </a-col>
         </a-row>
+
+        <!-- ── Calibration restore ───────────────────────────────────────────── -->
+        <a-row style="margin-bottom:16px; align-items:center; padding:10px 12px; background:var(--color-bg-2); border-radius:4px; border:1px solid var(--color-border-2);" :gutter="12">
+          <a-col :flex="'auto'" style="display:flex; align-items:center; gap:10px;">
+            <span style="font-weight:500;">Calibration</span>
+            <a-tag v-if="calibFile" color="orange" size="small">{{ calibFile.name }}</a-tag>
+            <a-tag v-else color="gray" size="small">using live device calibration</a-tag>
+            <span style="font-size:0.82rem; color:var(--color-text-3);">injected into all config slots on connect and flash</span>
+          </a-col>
+          <a-col :flex="'none'" style="display:flex; gap:8px;">
+            <a-button size="small" :disabled="writing" @click="loadCalibFile">
+              <template #icon><icon-upload /></template>
+              Upload .bin
+            </a-button>
+            <a-button v-if="calibFile" size="small" :disabled="writing" @click="calibFile = null">
+              <template #icon><icon-close /></template>
+              Clear
+            </a-button>
+            <a-button size="small" :disabled="writing || !appStore.connectState" @click="applyCalibNow">
+              <template #icon><icon-save /></template>
+              Apply to all slots
+            </a-button>
+          </a-col>
+        </a-row>
+
 
         <!-- ── Normal mode: replace individual slots ──────────────────────────── -->
         <div v-if="!fullReconfig">
@@ -256,7 +290,12 @@
                 <a-option v-for="n in [1,2,3,4,5,6]" :key="n" :value="n">{{ n }}</a-option>
               </a-select>
               <span style="margin-left:12px; color:var(--color-text-3); font-size:0.85rem;">
-                {{ rcSlotSizeKb }} KB/slot · first slot @ 0x44000
+                <template v-if="rcZoneACount > 0">
+                  {{ rcZoneACount }}×{{ (ZONE_A_FW_SLOT_SIZE/1024).toFixed(0) }} KB @ 0x{{ ZONE_A_FW_BASE.toString(16).toUpperCase() }} &nbsp;+&nbsp; {{ rcZoneBCount }}×{{ rcSlotSizeKb }} KB @ 0x44000
+                </template>
+                <template v-else>
+                  {{ rc.numSlots }}×{{ rcSlotSizeKb }} KB · first slot @ 0x44000
+                </template>
               </span>
             </a-col>
           </a-row>
@@ -265,9 +304,12 @@
             <a-col v-for="(slot, idx) in rc.slots" :key="idx" :span="12">
               <a-card class="slot-card" :style="slot.firmware ? { borderColor: PALETTE[idx % PALETTE.length] } : {}">
                 <template #title>
-                  <span :style="{ color: PALETTE[idx % PALETTE.length] }">Slot {{ slot.index }}</span>
+                  <span :style="{ color: PALETTE[idx % PALETTE.length] }">
+                    Slot {{ slot.index }}
+                    <span v-if="slot.zoneA" style="font-size:0.75rem; font-weight:normal; margin-left:4px; color:var(--color-text-3);">Zone A</span>
+                  </span>
                   <span v-if="slot.firmware" class="slot-subtitle">
-                    {{ (slot.firmware.length / 1024).toFixed(1) }} / {{ rcSlotSizeKb }} KB
+                    {{ (slot.firmware.length / 1024).toFixed(1) }} / {{ (slot.capacity / 1024).toFixed(1) }} KB
                   </span>
                 </template>
                 <template #extra>
@@ -277,7 +319,7 @@
                 <div v-if="slot.firmware" class="fill-track" style="margin-bottom:10px;">
                   <div class="fill-inner"
                     :style="{
-                      width: Math.min(Math.ceil(slot.firmware.length/0x40)*0x40 / rcSlotSize * 100, 100) + '%',
+                      width: Math.min(Math.ceil(slot.firmware.length/0x40)*0x40 / slot.capacity * 100, 100) + '%',
                       background: slot.oversize ? '#f53f3f' : PALETTE[idx % PALETTE.length]
                     }"
                   />
@@ -325,15 +367,19 @@
       </template>
     </a-card>
 
-    <!-- ── Status log ─────────────────────────────────────────────────────────── -->
-    <div
-      id="statusArea"
-      v-if="state.status"
-      style="height:14em; background-color:var(--color-bg-3); color:var(--color-text-3);
-             overflow:auto; padding:14px; margin-top:12px;
-             font-family:monospace; font-size:0.82rem; border-radius:4px;"
-      v-html="state.status"
-    />
+    <!-- ── Progress / status ─────────────────────────────────────────────────── -->
+    <div v-if="prog.visible || statusMsg" class="progress-area">
+      <div v-if="statusMsg" class="status-msg" :class="statusMsgType">{{ statusMsg }}</div>
+      <div v-if="prog.visible" class="prog-row">
+        <div class="prog-label">
+          <span class="prog-name">{{ prog.label }}</span>
+          <span class="prog-pct">{{ prog.pct.toFixed(0) }}%</span>
+        </div>
+        <div class="prog-track">
+          <div class="prog-fill" :style="{ width: prog.pct + '%', background: prog.color }" />
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -350,18 +396,30 @@ const appStore = useAppStore();
 const { loading, setLoading } = useLoading(false);
 
 // ── Constants ────────────────────────────────────────────────────────────────
-const EEPROM_SIZE   = 0x80000;
-const FW_BASE       = 0x44000;
-const BL_ADDR       = 0x41000;
-const META_BASE     = 0x40000;
-const CFG_SLOT_BASE = 0x20000;
-const CFG_SLOT_SIZE = 0x4000;   // must match CONFIG_SIZE in bootloader eeprom.c
+const EEPROM_SIZE        = 0x80000;
+const FW_BASE            = 0x44000;
+const BL_ADDR            = 0x41000;
+const META_BASE          = 0x40000;
+const CFG_SLOT_BASE      = 0x10000;   // config slots start after original 64 KB EEPROM (0x0000–0x0FFFF)
+const CFG_SLOT_SIZE      = 0x2000;    // 8 KB per slot — must match CONFIG_SIZE in bootloader eeprom.c
+const ORIG_EEPROM_SIZE   = 0x10000;   // first 64 KB: original radio EEPROM space
+const ZONE_A_FW_BASE     = 0x1C000;   // Zone A firmware starts at 0x1C000 (config slots end at 0x18000)
+const ZONE_A_FW_SLOT_SIZE= 0xF000;    // 60 KB per Zone A slot (2×60 KB = 0x1E000, ends at 0x3A000 < SSB @ 0x3C228)
+const ZONE_A_FW_COUNT    = 2;         // two Zone A slots (0x1C000 and 0x2B000)
+const ZONE_A_FW_END      = ZONE_A_FW_BASE + ZONE_A_FW_COUNT * ZONE_A_FW_SLOT_SIZE; // 0x3A000
+const SSB_PATCH_ADDR     = 0x3C228;   // written by chi page's "Set SSB patch" button
+const SSB_PATCH_SIZE     = 15832;     // size of ssb.bin (0x3DD8 bytes, ends at 0x3FFFF)
+const CALIB_ADDR         = 0x1E00;    // hardware calibration block (RSSI @ 0x1EC0, battery @ 0x1F40)
+const CALIB_SIZE         = 0x0200;    // 512 bytes (0x1E00–0x1FFF)
+const CALIB_BACKUP_ADDR  = 0x3A000;  // calibration backup: after Zone A (ends 0x39FFF), before SSB (0x3C228)
 
 const PALETTE = ['#4CAF50','#7C4DFF','#F44336','#00BCD4','#FF9800','#E91E63'];
 const C_LIVE  = '#1565C0';
 const C_FREE  = '#BDBDBD';
 const C_META  = '#E65100';
 const C_BL    = '#B71C1C';
+const C_SSB   = '#00796B';
+const C_CALIB = '#F57F17';  // amber — calibration region
 
 // ── State ────────────────────────────────────────────────────────────────────
 type Phase = 'idle' | 'ready';
@@ -374,9 +432,10 @@ const hovered     = ref<any>(null);
 const highlight   = ref(-1);
 
 const device = reactive({
-  slotCount: 0,
-  lastFw:    0xFF as number,
-  slots:     [] as any[],   // [{index, name, start, end, capacity}]
+  slotCount:      0,
+  lastFw:         0xFF as number,
+  slots:          [] as any[],   // [{index, name, start, end, capacity}]
+  ssbPatchPresent: false,
 });
 
 // Per-slot replacements (normal mode): idx → {firmware, filename, name, oversize}
@@ -384,20 +443,39 @@ const replacements = reactive<Record<number, any>>({});
 
 // Full reconfigure state
 const rc = reactive({ numSlots: 4, slots: [] as any[] });
+const rcZoneACount = computed(() => Math.max(0, rc.numSlots - 4));
+const rcZoneBCount = computed(() => Math.min(rc.numSlots, 4));
 
-// Bootloader binary (always loaded from /L_BL003.bin)
+// Bootloader binary — loaded from /bootloader.bin on mount, or replaced by user file picker
 const bl = ref<Uint8Array | null>(null);
-const blName = ref('L_BL003');
+const blName = ref('');
+const blIsCustom = ref(false);
+const calibFile = ref<{ name: string; data: Uint8Array } | null>(null);
 
-const state = reactive({ status: '' });
+
+// ── Single progress bar ───────────────────────────────────────────────────────
+const prog = reactive({ visible: false, label: '', pct: 0, color: '#1890ff' });
+const statusMsg     = ref('');
+const statusMsgType = ref('');
+
+function setStatus(msg: string, type: 'error' | 'success' | '' = '') {
+  statusMsg.value = msg; statusMsgType.value = type;
+}
+function showBar(color: string) {
+  prog.visible = true; prog.pct = 0; prog.color = color; prog.label = '';
+}
+function hideBar() { prog.visible = false; }
+// Update label + pct and yield to the renderer so the bar actually moves.
+async function tickBar(label: string, pct: number) {
+  prog.label = label;
+  prog.pct   = Math.min(100, pct);
+  await nextTick();
+  // One extra microtask yield so the browser can paint before the next serial op.
+  await new Promise(r => setTimeout(r, 0));
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function p5(n: number) { return n.toString(16).toUpperCase().padStart(5, '0'); }
-
-function log(msg: string) {
-  state.status += msg + '<br/>';
-  nextTick(() => { const el = document.getElementById('statusArea'); if (el) el.scrollTop = el.scrollHeight; });
-}
 
 function errMsg(e: any): string {
   if (e instanceof Error) return e.message;
@@ -419,14 +497,30 @@ function isEqual(a: Uint8Array, b: Uint8Array) {
 // ── Bootloader load ───────────────────────────────────────────────────────────
 async function loadBL() {
   try {
-    const res = await fetch('/L_BL003.bin');
+    const res = await fetch('/bootloader.bin');
     if (!res.body) return;
     const reader = res.body.getReader();
     const chunks: number[] = [];
     while (true) { const { done, value } = await reader.read(); if (done) break; chunks.push(...value); }
     const buf = new Uint8Array(0x3000); buf.set(chunks, 0); bl.value = buf;
-    blName.value = 'L_BL003';
+    blName.value = 'bootloader.bin (built-in)';
+    blIsCustom.value = false;
   } catch { /* silent */ }
+}
+
+function loadCustomBL() {
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = '.bin';
+  input.onchange = async () => {
+    if (!input.files?.length) return;
+    const file = input.files[0];
+    const raw  = new Uint8Array(await file.arrayBuffer());
+    const buf  = new Uint8Array(0x3000); buf.set(raw.slice(0, 0x3000), 0);
+    bl.value = buf;
+    blName.value = file.name;
+    blIsCustom.value = true;
+  };
+  input.click();
 }
 
 onMounted(loadBL);
@@ -439,56 +533,157 @@ function seg(name: string, short: string, start: number, size: number,
            fillPct: 0, slotIdx: null, ...extra };
 }
 
+function calibBackupSeg() {
+  return seg('Calibration Backup', 'Cal BK', CALIB_BACKUP_ADDR, CALIB_SIZE, C_CALIB,
+    `Reserved area at 0x${CALIB_BACKUP_ADDR.toString(16).toUpperCase()} (512 B). Unused — calibration is now part of each firmware's 8 KB config slot snapshot.`);
+}
+
 const mapMgmt = computed<any[]>(() => {
   const n  = device.slotCount || 0;
   const rs: any[] = [];
-  rs.push(seg('Live Config (0x0000–0x3FFF)', 'Config', 0x00000, 0x4000, C_LIVE,
-    'Active radio config: channels, settings, calibration, and firmware-specific data. ' +
-    'The bootloader saves this entire 16 KB region before every firmware switch and restores the target slot\'s snapshot on boot.'));
-  rs.push(seg('Free', '', 0x04000, 0x1C000, C_FREE, 'Unused free zone — 112 KB.'));
+
+  // Live config — split at the calibration block
+  rs.push(seg('Live Config (0x0000–0x1DFF)', 'Config', 0x00000, CALIB_ADDR, C_LIVE,
+    'Active radio config: channel memories, VFO state, and user settings. ' +
+    'Part of the 8 KB per-firmware snapshot saved and restored by the bootloader on every firmware switch.'));
+  rs.push(seg('RF Calibration (0x1E00–0x1FFF)', 'Cal', CALIB_ADDR, CALIB_SIZE, C_CALIB,
+    'Hardware-specific RSSI and battery calibration. Included in each firmware\'s config slot snapshot (8 KB). ' +
+    'Saved and restored automatically on every firmware switch.'));
+
+  // Original 64 KB EEPROM remainder: channel names (0x4000), memories (0x8000), etc.
+  rs.push(seg('Original EEPROM Data (0x2000–0xFFFF)', 'Channels/Mem',
+    0x2000, ORIG_EEPROM_SIZE - 0x2000, C_FREE,
+    'Remainder of the original 64 KB EEPROM: extended config, channel names (0x4000–0x7FFF), ' +
+    'channel data (0x8000–0xEFFF), FM/misc (0xF000–0xFFFF). Shared across all firmwares — not backed up per slot.'));
+
+  // Config slots (start at 0x10000, after original 64 KB EEPROM)
   for (let i = 0; i < n; i++) {
     rs.push(seg(`Config Slot ${i+1}`, `Cfg${i+1}`,
       CFG_SLOT_BASE + i * CFG_SLOT_SIZE, CFG_SLOT_SIZE, lighten(slotColor(i)),
       `Config snapshot for firmware slot ${i+1}. Saved here before switching away, restored when switching back. ` +
       `Blanked (all 0xFF) when a new firmware is written to slot ${i+1} so the first boot gets clean defaults.`));
   }
-  const cfgEnd = CFG_SLOT_BASE + n * CFG_SLOT_SIZE;
-  if (cfgEnd < META_BASE)
-    rs.push(seg('Free', '', cfgEnd, META_BASE - cfgEnd, C_FREE,
-      `Free zone — ${((META_BASE - cfgEnd) / 1024).toFixed(0)} KB.`));
+  const cfgEnd = n > 0 ? CFG_SLOT_BASE + n * CFG_SLOT_SIZE : CFG_SLOT_BASE;
+
+  // Zone A firmware slots: slots stored at addresses in [ZONE_A_FW_BASE, FW_BASE)
+  const zoneASlots = device.slots
+    .filter((s: any) => s.start >= ZONE_A_FW_BASE && s.start < FW_BASE)
+    .sort((a: any, b: any) => a.start - b.start);
+
+  let cursor = cfgEnd;
+
+  if (zoneASlots.length > 0) {
+    // Free between cursor and first Zone A firmware slot
+    if (cursor < zoneASlots[0].start)
+      rs.push(seg('Free', '', cursor, zoneASlots[0].start - cursor, C_FREE,
+        `Unused — ${((zoneASlots[0].start - cursor) / 1024).toFixed(1)} KB.`));
+
+    for (let i = 0; i < zoneASlots.length; i++) {
+      const s   = zoneASlots[i];
+      const idx = device.slots.indexOf(s);
+      const col = slotColor(idx);
+      const cap = s.capacity;
+      const used = s.end - s.start + 1;
+      const repl = replacements[idx];
+      const fillSz = repl ? Math.ceil(repl.firmware.length / 0x40) * 0x40 : used;
+      rs.push({
+        name:    `FW Slot ${s.index}${s.name ? ' · ' + s.name : ''} (Zone A)`,
+        short:   s.name || `Slot ${s.index}`,
+        start:   s.start, end: s.start + cap - 1, size: cap,
+        flex:    Math.max(Math.round(cap / 64), 8),
+        color:   col, bgColor: lighten(col, 0.68),
+        desc:    `Zone A firmware slot ${s.index}${s.name ? ' "' + s.name + '"' : ''} — ${(used/1024).toFixed(1)} KB used of ${(cap/1024).toFixed(1)} KB capacity. ` +
+                 `Range 0x${p5(s.start)}–0x${p5(s.start + cap - 1)}. ` +
+                 `Config snapshot at 0x${(CFG_SLOT_BASE + idx * CFG_SLOT_SIZE).toString(16).toUpperCase()}. ` +
+                 (repl ? `Replacement loaded: ${repl.filename} (${(repl.firmware.length/1024).toFixed(1)} KB).` : 'Click to jump to slot card.'),
+        fillPct: Math.min(fillSz / cap * 100, 100),
+        slotIdx: idx,
+      });
+      cursor = s.start + cap;
+
+      // Free between this Zone A slot and the next
+      const nextBoundary = i + 1 < zoneASlots.length ? zoneASlots[i + 1].start : CALIB_BACKUP_ADDR;
+      if (cursor < nextBoundary)
+        rs.push(seg('Free', '', cursor, nextBoundary - cursor, C_FREE,
+          `Unused — ${((nextBoundary - cursor) / 1024).toFixed(1)} KB.`));
+    }
+    // Calibration backup after Zone A
+    cursor = CALIB_BACKUP_ADDR + CALIB_SIZE;
+    rs.push(calibBackupSeg());
+    // SSB patch (if present)
+    if (device.ssbPatchPresent) {
+      if (cursor < SSB_PATCH_ADDR)
+        rs.push(seg('Free', '', cursor, SSB_PATCH_ADDR - cursor, C_FREE,
+          `Unused — ${((SSB_PATCH_ADDR - cursor) / 1024).toFixed(1)} KB.`));
+      rs.push(seg('SI4732 SSB patch', 'SSB', SSB_PATCH_ADDR, SSB_PATCH_SIZE, C_SSB,
+        `SI4732 SSB patch. ${(SSB_PATCH_SIZE / 1024).toFixed(1)} KB — does not overlap with multiboot regions.`));
+      const ssbEnd = SSB_PATCH_ADDR + SSB_PATCH_SIZE;
+      if (ssbEnd < META_BASE)
+        rs.push(seg('Free', '', ssbEnd, META_BASE - ssbEnd, C_FREE,
+          `Unused — ${((META_BASE - ssbEnd) / 1024).toFixed(1)} KB.`));
+    } else if (cursor < META_BASE) {
+      rs.push(seg('Free', '', cursor, META_BASE - cursor, C_FREE,
+        `Unused — ${((META_BASE - cursor) / 1024).toFixed(1)} KB.`));
+    }
+  } else {
+    // No Zone A firmware slots
+    if (cursor < CALIB_BACKUP_ADDR)
+      rs.push(seg('Free', '', cursor, CALIB_BACKUP_ADDR - cursor, C_FREE,
+        `Unused — ${((CALIB_BACKUP_ADDR - cursor) / 1024).toFixed(1)} KB.`));
+    cursor = CALIB_BACKUP_ADDR + CALIB_SIZE;
+    rs.push(calibBackupSeg());
+    if (device.ssbPatchPresent) {
+      if (cursor < SSB_PATCH_ADDR)
+        rs.push(seg('Free', '', cursor, SSB_PATCH_ADDR - cursor, C_FREE,
+          `Unused — ${((SSB_PATCH_ADDR - cursor) / 1024).toFixed(1)} KB.`));
+      rs.push(seg('SI4732 SSB patch', 'SSB', SSB_PATCH_ADDR, SSB_PATCH_SIZE, C_SSB,
+        `SI4732 SSB patch. ${(SSB_PATCH_SIZE / 1024).toFixed(1)} KB at 0x${SSB_PATCH_ADDR.toString(16).toUpperCase()}–0x${(SSB_PATCH_ADDR + SSB_PATCH_SIZE - 1).toString(16).toUpperCase()}.`));
+      const ssbEnd = SSB_PATCH_ADDR + SSB_PATCH_SIZE;
+      if (ssbEnd < META_BASE)
+        rs.push(seg('Free', '', ssbEnd, META_BASE - ssbEnd, C_FREE,
+          `Unused — ${((META_BASE - ssbEnd) / 1024).toFixed(1)} KB.`));
+    } else if (cursor < META_BASE) {
+      rs.push(seg('Free', '', cursor, META_BASE - cursor, C_FREE,
+        `Unused free zone — ${((META_BASE - cursor) / 1024).toFixed(0)} KB.`));
+    }
+  }
+
   rs.push(seg('Metadata', 'Meta', META_BASE, 0x1000, C_META,
     '0x40000: slot count (1 B) · 0x40001: boot mode flag · 0x40002: last-run slot index · ' +
     '0x40008: bootloader name (8 B) · 0x40020+: slot table (32 B/slot: 16 B name | 4 B start LE | 4 B end LE | 8 B padding)'));
   rs.push(seg('Bootloader B', 'BL-B', BL_ADDR, 0x3000, C_BL,
-    'Losehu Bootloader B (L_BL003.bin, ~11 KB). Executed by Bootloader A in MCU flash when radio powers on with MENU held. ' +
+    'Losehu Bootloader B (bootloader.bin, ~11 KB). Executed by Bootloader A in MCU flash when radio powers on with MENU held. ' +
     'Handles firmware selection, config save/restore, and UART flashing.'));
   return rs;
 });
 
 const mapFw = computed<any[]>(() => {
   const rs: any[] = [];
-  const slots = device.slots;
-  for (let i = 0; i < slots.length; i++) {
-    const s   = slots[i];
-    const cap = s.capacity;
-    const used = s.end - s.start + 1;
-    const repl = replacements[i];
+  // Zone B only: firmware slots stored at addresses >= FW_BASE (0x44000)
+  const zoneBSlots = device.slots.filter((s: any) => s.start >= FW_BASE);
+  for (const s of zoneBSlots) {
+    const idx    = device.slots.indexOf(s);
+    const cap    = s.capacity;
+    const used   = s.end - s.start + 1;
+    const repl   = replacements[idx];
     const fillSz = repl ? Math.ceil(repl.firmware.length / 0x40) * 0x40 : used;
-    const col = slotColor(i);
+    const col    = slotColor(idx);
     rs.push({
-      name:     `FW Slot ${s.index}${s.name ? ' · ' + s.name : ''}${repl ? ' [→ ' + repl.filename + ']' : ''}`,
-      short:    s.name || `Slot ${s.index}`,
-      start:    s.start, end: s.start + cap - 1, size: cap,
-      flex:     Math.max(Math.round(cap / 64), 8),
-      color:    col, bgColor: lighten(col, 0.68),
-      desc:     `Slot ${s.index} "${s.name}" — ${(used/1024).toFixed(1)} KB used of ${(cap/1024).toFixed(1)} KB capacity. ` +
-                `Range 0x${p5(s.start)}–0x${p5(s.start + cap - 1)}. Config snapshot @ 0x${(CFG_SLOT_BASE+(i)*CFG_SLOT_SIZE).toString(16).toUpperCase()}. ` +
-                (repl ? `Replacement loaded: ${repl.filename} (${(repl.firmware.length/1024).toFixed(1)} KB).` : 'Click to jump to slot card.'),
-      fillPct:  Math.min(fillSz / cap * 100, 100),
-      slotIdx:  i,
+      name:    `FW Slot ${s.index}${s.name ? ' · ' + s.name : ''}${repl ? ' [→ ' + repl.filename + ']' : ''}`,
+      short:   s.name || `Slot ${s.index}`,
+      start:   s.start, end: s.start + cap - 1, size: cap,
+      flex:    Math.max(Math.round(cap / 64), 8),
+      color:   col, bgColor: lighten(col, 0.68),
+      desc:    `Slot ${s.index}${s.name ? ' "' + s.name + '"' : ''} — ${(used/1024).toFixed(1)} KB used of ${(cap/1024).toFixed(1)} KB capacity. ` +
+               `Range 0x${p5(s.start)}–0x${p5(s.start + cap - 1)}. Config snapshot @ 0x${(CFG_SLOT_BASE + idx * CFG_SLOT_SIZE).toString(16).toUpperCase()}. ` +
+               (repl ? `Replacement loaded: ${repl.filename} (${(repl.firmware.length/1024).toFixed(1)} KB).` : 'Click to jump to slot card.'),
+      fillPct: Math.min(fillSz / cap * 100, 100),
+      slotIdx: idx,
     });
   }
-  const tailStart = slots.length > 0 ? slots[slots.length-1].start + slots[slots.length-1].capacity : FW_BASE;
+  const tailStart = zoneBSlots.length > 0
+    ? zoneBSlots[zoneBSlots.length - 1].start + zoneBSlots[zoneBSlots.length - 1].capacity
+    : FW_BASE;
   if (tailStart < EEPROM_SIZE)
     rs.push(seg('Free', 'Free', tailStart, EEPROM_SIZE - tailStart, C_FREE,
       `Unused EEPROM — ${((EEPROM_SIZE - tailStart)/1024).toFixed(1)} KB.`));
@@ -497,14 +692,20 @@ const mapFw = computed<any[]>(() => {
 
 const mapLegend = computed(() => {
   const items: { label: string; color: string }[] = [
-    { label: 'Live Config',   color: C_LIVE },
-    { label: 'Free / Unused', color: C_FREE },
+    { label: 'Live Config',    color: C_LIVE  },
+    { label: 'RF Calibration', color: C_CALIB },
+    { label: 'Free / Unused',  color: C_FREE  },
   ];
   for (let i = 0; i < device.slotCount; i++)
     items.push({ label: `Config Slot ${i+1}`, color: lighten(slotColor(i)) });
+  if (device.ssbPatchPresent)
+    items.push({ label: 'SI4732 SSB patch', color: C_SSB });
   items.push({ label: 'Metadata', color: C_META }, { label: 'Bootloader B', color: C_BL });
-  for (let i = 0; i < device.slots.length; i++)
-    items.push({ label: `FW Slot ${i+1}${device.slots[i].name ? ' · '+device.slots[i].name : ''}`, color: slotColor(i) });
+  for (let i = 0; i < device.slots.length; i++) {
+    const s     = device.slots[i];
+    const label = `FW Slot ${s.index}${s.name ? ' · ' + s.name : ''}${s.start < FW_BASE ? ' (Zone A)' : ''}`;
+    items.push({ label, color: slotColor(i) });
+  }
   return items;
 });
 
@@ -526,28 +727,34 @@ function u32le(buf: Uint8Array, off: number) {
 async function readDevice() {
   if (!appStore.connectState) { alert(sessionStorage.getItem('noticeConnectK5')); return; }
   if (appStore.configuration?.uart !== 'losehu') {
-    log('ERROR: requires losehu bootloader mode — MENU + power on, then reconnect.'); return;
+    setStatus('ERROR: requires losehu bootloader mode — MENU + power on, then reconnect.', 'error'); return;
   }
   reading.value = true;
   setLoading(true);
-  state.status = '';
+  hideBar();
+  statusMsg.value = '';
   // Reset state
-  Object.assign(device, { slotCount: 0, lastFw: 0xFF, slots: [] });
+  Object.assign(device, { slotCount: 0, lastFw: 0xFF, slots: [], ssbPatchPresent: false });
   Object.keys(replacements).forEach(k => delete replacements[+k]);
   fullReconfig.value = false;
 
   try {
     await eeprom_init(appStore.connectPort);
 
+    // Detect SSB patch: read 8 bytes at its start; if not all 0xFF it's present.
+    const ssbProbe = await readBytes(SSB_PATCH_ADDR, 8);
+    device.ssbPatchPresent = ssbProbe.some(b => b !== 0xFF);
+
     const countBuf = await readBytes(0x40000, 1);
     const count = countBuf[0];
+
     if (!count || count > 64) {
-      log('No valid multiboot metadata found. Use "Full reconfigure" to set up the device for the first time.');
+      setStatus('No multiboot metadata found. Use "Full reconfigure" to set up the device.', '');
       phase.value = 'ready';
       device.slotCount = 0;
       fullReconfig.value = true;
       rebuildRcSlots();
-      return;
+      reading.value = false; setLoading(false); return;
     }
 
     const lastFwBuf = await readBytes(0x40002, 1);
@@ -563,21 +770,27 @@ async function readDevice() {
 
     device.slots = raw.map((r, i) => {
       const nextStart = i+1 < raw.length ? raw[i+1].start : EEPROM_SIZE;
+      let capacity = nextStart - r.start;
+      // Cap Zone A slots to ZONE_A_FW_SLOT_SIZE to prevent writes from
+      // overrunning the SSB patch area that starts at 0x3C228.
+      if (r.start >= ZONE_A_FW_BASE && r.start < FW_BASE)
+        capacity = Math.min(capacity, ZONE_A_FW_SLOT_SIZE);
       return {
-        index: i+1, name: r.name, start: r.start, end: r.end,
-        capacity: nextStart - r.start,
+        index: i+1, name: r.name, start: r.start, end: r.end, capacity,
         startHex: '0x' + p5(r.start), endHex: '0x' + p5(r.end),
       };
     });
     device.slotCount = count;
-
-    log(`Read OK: ${count} slot(s), last booted slot ${device.lastFw < 0xFF ? device.lastFw : '(none)'}.`);
-    device.slots.forEach((s: any) =>
-      log(`  Slot ${s.index}: "${s.name}"  ${s.startHex}–${s.endHex}  cap ${(s.capacity/1024).toFixed(1)} KB`));
-
     phase.value = 'ready';
+
+    // Inject calibration into every config slot (uploaded file or live device).
+    if (count > 0) {
+      const calibData = await getCalibData();
+      if (calibData) await writeCalibToAllSlots(calibData, count);
+    }
+
   } catch (e: any) {
-    log('Error reading device: ' + errMsg(e));
+    setStatus('Error reading device: ' + errMsg(e), 'error');
   }
   reading.value = false;
   setLoading(false);
@@ -629,27 +842,33 @@ async function flashSingleSlot(idx: number) {
   const repl = replacements[idx];
   if (!slot || !repl || repl.oversize) return;
   if (!appStore.connectState) { alert(sessionStorage.getItem('noticeConnectK5')); return; }
-  if (appStore.configuration?.uart !== 'losehu') { log('ERROR: bootloader mode required.'); return; }
+  if (appStore.configuration?.uart !== 'losehu') { setStatus('ERROR: bootloader mode required.', 'error'); return; }
 
   writing.value = true;
+  statusMsg.value = '';
+  const color = PALETTE[idx % PALETTE.length];
+  showBar(color);
+
   const fw     = repl.firmware as Uint8Array;
   const padded = new Uint8Array(Math.ceil(fw.length / 0x40) * 0x40).fill(0xFF);
   padded.set(fw, 0);
   const newEnd = slot.start + padded.length - 1;
 
-  log(`--- Flash slot ${slot.index} "${slot.name}" → "${repl.name}" ---`);
   try {
     await eeprom_init(appStore.connectPort);
 
+    // Firmware
     for (let i = slot.start; i < slot.start + padded.length; i += 0x40) {
       const chunk  = padded.slice(i - slot.start, i - slot.start + 0x40);
       await eeprom_write(appStore.connectPort, i, chunk, chunk.length, appStore.configuration?.uart);
       const verify = await eeprom_read(appStore.connectPort, i, chunk.length, appStore.configuration?.uart);
-      if (!isEqual(chunk, verify)) { log(`Write error @ 0x${i.toString(16)}, retrying…`); i -= 0x40; continue; }
-      log(`Writing… ${(((i-slot.start)/padded.length)*100).toFixed(1)}%`);
+      if (!isEqual(chunk, verify)) { i -= 0x40; continue; }
+      const pct = (i - slot.start + 0x40) / padded.length * 100;
+      await tickBar(`Writing ${repl.name} to 0x${p5(i)}`, pct);
     }
 
-    // Update metadata entry for this slot
+    // Metadata
+    await tickBar(`Writing metadata to 0x${p5(0x40020 + 32 * (slot.index - 1))}`, 100);
     const metaBase = 0x40020 + 32 * (slot.index - 1);
     const meta = new Uint8Array(32).fill(0x00);
     meta.set(stringToUint8Array(repl.name.substring(0, 13)), 0);
@@ -657,16 +876,15 @@ async function flashSingleSlot(idx: number) {
     meta.set(hexReverseStringToUint8Array(newEnd.toString(16)), 20);
     await eeprom_write(appStore.connectPort, metaBase,        meta.slice(0, 0x10), 0x10, appStore.configuration?.uart);
     await eeprom_write(appStore.connectPort, metaBase + 0x10, meta.slice(0x10),    0x10, appStore.configuration?.uart);
-    log(`Metadata updated: "${repl.name}" @ 0x${p5(slot.start)}–0x${p5(newEnd)}`);
 
-    // Clear config slot so first boot uses firmware defaults, not stale snapshot
-    await clearConfigSlot(slot.index);
+    // Config slot clear
+    await clearConfigSlotWithProg(slot.index, color);
 
-    log('Done! Rebooting…');
-    await eeprom_reboot(appStore.connectPort);
+    await tickBar('Done', 100);
+    setStatus('Flash complete.', 'success');
     clearReplacement(idx);
-    await readDevice();
-  } catch (e: any) { log('Error: ' + errMsg(e)); }
+    await eeprom_reboot(appStore.connectPort);
+  } catch (e: any) { setStatus('Error: ' + errMsg(e), 'error'); hideBar(); }
   writing.value = false;
 }
 
@@ -677,23 +895,31 @@ async function flashAllUpdated() {
   if (!toFlash.length) return;
 
   writing.value = true;
+  statusMsg.value = '';
+  showBar('#1890ff');
+
   try {
     await eeprom_init(appStore.connectPort);
     for (const { idx, repl } of toFlash) {
-      const slot = device.slots[idx];
-      const fw   = repl.firmware as Uint8Array;
+      const slot  = device.slots[idx];
+      const color = PALETTE[idx % PALETTE.length];
+      prog.color  = color;
+      const fw    = repl.firmware as Uint8Array;
       const padded = new Uint8Array(Math.ceil(fw.length / 0x40) * 0x40).fill(0xFF);
       padded.set(fw, 0);
       const newEnd = slot.start + padded.length - 1;
 
-      log(`--- Slot ${slot.index} "${slot.name}" → "${repl.name}" ---`);
       for (let i = slot.start; i < slot.start + padded.length; i += 0x40) {
         const chunk  = padded.slice(i - slot.start, i - slot.start + 0x40);
         await eeprom_write(appStore.connectPort, i, chunk, chunk.length, appStore.configuration?.uart);
         const verify = await eeprom_read(appStore.connectPort, i, chunk.length, appStore.configuration?.uart);
-        if (!isEqual(chunk, verify)) { log(`Write error @ 0x${i.toString(16)}, retrying…`); i -= 0x40; continue; }
-        log(`Slot ${slot.index} ${(((i-slot.start)/padded.length)*100).toFixed(1)}%`);
+        if (!isEqual(chunk, verify)) { i -= 0x40; continue; }
+        const pct = (i - slot.start + 0x40) / padded.length * 100;
+        await tickBar(`Writing ${repl.name} to 0x${p5(i)}`, pct);
       }
+
+      prog.color = '#607D8B';
+      await tickBar(`Writing metadata to 0x${p5(0x40020 + 32 * (slot.index - 1))}`, 100);
       const metaBase = 0x40020 + 32 * (slot.index - 1);
       const meta = new Uint8Array(32).fill(0x00);
       meta.set(stringToUint8Array(repl.name.substring(0, 13)), 0);
@@ -701,37 +927,97 @@ async function flashAllUpdated() {
       meta.set(hexReverseStringToUint8Array(newEnd.toString(16)), 20);
       await eeprom_write(appStore.connectPort, metaBase,        meta.slice(0, 0x10), 0x10, appStore.configuration?.uart);
       await eeprom_write(appStore.connectPort, metaBase + 0x10, meta.slice(0x10),    0x10, appStore.configuration?.uart);
-      await clearConfigSlot(slot.index);
+
+      prog.color = color;
+      await clearConfigSlotWithProg(slot.index, color);
     }
-    log('All slots written. Rebooting…');
-    await eeprom_reboot(appStore.connectPort);
+
+    await tickBar('Done', 100);
+    setStatus('Flash complete.', 'success');
     Object.keys(replacements).forEach(k => delete replacements[+k]);
-    await readDevice();
-  } catch (e: any) { log('Error: ' + errMsg(e)); }
+    await eeprom_reboot(appStore.connectPort);
+  } catch (e: any) { setStatus('Error: ' + errMsg(e), 'error'); hideBar(); }
   writing.value = false;
 }
 
-// ── Config slot clear (bug fix) ───────────────────────────────────────────────
-async function clearConfigSlot(slotIndex: number) {
+// ── Config slot clear ─────────────────────────────────────────────────────────
+// Write live calibration into every config slot at offset +0x1E00.
+// This guarantees the bootloader can always restore valid calibration
+// on every firmware switch, even on first boot of a freshly cleared slot.
+async function writeCalibToAllSlots(calibData: Uint8Array, slotCount: number) {
+  prog.color = C_CALIB;
+  for (let i = 1; i <= slotCount; i++) {
+    const addr = CFG_SLOT_BASE + (i - 1) * CFG_SLOT_SIZE + CALIB_ADDR;
+    await writeRangeWithProg(addr, calibData, `cal → slot ${i}`);
+  }
+}
+
+// Return calibration data: uploaded file if set, otherwise live device.
+async function getCalibData(): Promise<Uint8Array | null> {
+  if (calibFile.value) return calibFile.value.data;
+  const data = await readBytes(CALIB_ADDR, CALIB_SIZE);
+  return data.some(b => b !== 0xFF) ? data : null;
+}
+
+function loadCalibFile() {
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = '.bin';
+  input.onchange = async () => {
+    if (!input.files?.length) return;
+    const file = input.files[0];
+    const raw = new Uint8Array(await file.arrayBuffer());
+    if (raw.length !== CALIB_SIZE) {
+      setStatus(`Calibration file must be exactly ${CALIB_SIZE} bytes (got ${raw.length}).`, 'error');
+      return;
+    }
+    calibFile.value = { name: file.name, data: raw };
+    setStatus(`Calibration file "${file.name}" loaded. Click "Apply to all slots" to write.`, 'success');
+  };
+  input.click();
+}
+
+async function applyCalibNow() {
+  if (!appStore.connectState) { alert(sessionStorage.getItem('noticeConnectK5')); return; }
+  if (device.slotCount < 1) { setStatus('Read device first.', 'error'); return; }
+  writing.value = true; statusMsg.value = '';
+  showBar(C_CALIB);
+  try {
+    await eeprom_init(appStore.connectPort);
+    const data = await getCalibData();
+    if (!data) { setStatus('No calibration data available.', 'error'); hideBar(); writing.value = false; return; }
+    await writeCalibToAllSlots(data, device.slotCount);
+    await tickBar('Done', 100);
+    setStatus('Calibration written to all config slots.', 'success');
+  } catch (e: any) { setStatus('Error: ' + errMsg(e), 'error'); hideBar(); }
+  writing.value = false;
+}
+
+async function clearConfigSlotWithProg(slotIndex: number, color: string) {
   const addr  = CFG_SLOT_BASE + (slotIndex - 1) * CFG_SLOT_SIZE;
   const blank = new Uint8Array(0x40).fill(0xFF);
-  log(`Clearing config slot ${slotIndex} @ 0x${addr.toString(16).toUpperCase()}…`);
-  for (let i = addr; i < addr + CFG_SLOT_SIZE; i += 0x40)
+  const total = CFG_SLOT_SIZE / 0x40;
+  prog.color  = color;
+  let done = 0;
+  for (let i = addr; i < addr + CFG_SLOT_SIZE; i += 0x40) {
     await eeprom_write(appStore.connectPort, i, blank, 0x40, appStore.configuration?.uart);
+    await tickBar(`Clearing config slot ${slotIndex} at 0x${p5(i)}`, ++done / total * 100);
+  }
 }
+
 
 // ── Bootloader only ───────────────────────────────────────────────────────────
 async function writeBootloaderOnly() {
   if (!appStore.connectState) { alert(sessionStorage.getItem('noticeConnectK5')); return; }
-  if (!bl.value) { log('Bootloader binary not loaded — check /L_BL003.bin is served.'); return; }
-  writing.value = true; state.status = '';
+  if (!bl.value) { setStatus('Bootloader binary not loaded — use "Load custom BL" to select a file.', 'error'); return; }
+  writing.value = true; statusMsg.value = '';
+  showBar(C_BL);
   try {
     await eeprom_init(appStore.connectPort);
-    log('--- Writing bootloader B ---');
-    await writeRange(BL_ADDR, bl.value, 'Bootloader');
-    log('Done! Rebooting…');
+    await writeRangeWithProg(BL_ADDR, bl.value, 'bootloader');
+    await tickBar('Done', 100);
+    setStatus('Flash complete.', 'success');
     await eeprom_reboot(appStore.connectPort);
-  } catch (e: any) { log('Error: ' + errMsg(e)); }
+  } catch (e: any) { setStatus('Error: ' + errMsg(e), 'error'); hideBar(); }
   writing.value = false;
 }
 
@@ -744,24 +1030,35 @@ function toggleReconfig() {
   }
 }
 
+// Zone B slot size: divide Zone B space among Zone B slots (min 4, max numSlots if ≤4).
 const rcSlotSize = computed(() => {
-  const raw = Math.floor((EEPROM_SIZE - FW_BASE) / rc.numSlots);
+  const nB  = rcZoneBCount.value;
+  const raw = Math.floor((EEPROM_SIZE - FW_BASE) / Math.max(1, nB));
   return Math.floor(raw / 0x40) * 0x40;
 });
 const rcSlotSizeKb = computed(() => (rcSlotSize.value / 1024).toFixed(1));
 
-function rcSlotStart(i: number) { return FW_BASE + i * rcSlotSize.value; }
+function rcSlotStart(i: number) {
+  // Slots 0..rcZoneACount-1 → Zone A (0x1C000, 0x2B000, …)
+  // Slots rcZoneACount..numSlots-1 → Zone B (0x44000, …)
+  if (i < rcZoneACount.value)
+    return ZONE_A_FW_BASE + i * ZONE_A_FW_SLOT_SIZE;
+  return FW_BASE + (i - rcZoneACount.value) * rcSlotSize.value;
+}
 
 function rebuildRcSlots() {
   const prev = rc.slots.slice();
   rc.slots = Array.from({ length: rc.numSlots }, (_, i) => {
-    const s: any = {
-      index: i+1, start: rcSlotStart(i), end: rcSlotStart(i) + rcSlotSize.value - 1,
+    const isZoneA = i < rcZoneACount.value;
+    const cap     = isZoneA ? ZONE_A_FW_SLOT_SIZE : rcSlotSize.value;
+    const start   = rcSlotStart(i);
+    const s: any  = {
+      index: i+1, start, end: start + cap - 1, capacity: cap, zoneA: isZoneA,
       name: '', filename: '', firmware: null, oversize: false,
     };
     if (prev[i]) {
       Object.assign(s, { name: prev[i].name, filename: prev[i].filename, firmware: prev[i].firmware });
-      if (s.firmware) s.oversize = Math.ceil(s.firmware.length / 0x40) * 0x40 > rcSlotSize.value;
+      if (s.firmware) s.oversize = Math.ceil(s.firmware.length / 0x40) * 0x40 > cap;
     }
     return s;
   });
@@ -781,48 +1078,46 @@ function selectRcFile(idx: number) {
     const slot = rc.slots[idx];
     slot.filename = file.name;
     slot.firmware = fw;
-    slot.oversize = Math.ceil(fw.length / 0x40) * 0x40 > rcSlotSize.value;
+    slot.oversize = Math.ceil(fw.length / 0x40) * 0x40 > slot.capacity;
     if (!slot.name) slot.name = file.name.replace(/\.bin$/i,'').replace(/[^\x00-\x7f]/g,'').substring(0,13);
   };
   input.click();
 }
 
-// ── Write all (full reconfigure) ──────────────────────────────────────────────
-async function writeRange(start: number, data: Uint8Array | number[], label: string) {
+// ── Write range with single progress bar ──────────────────────────────────────
+async function writeRangeWithProg(start: number, data: Uint8Array | number[], name: string) {
   const arr = data instanceof Uint8Array ? data : new Uint8Array(data);
   for (let i = start; i < start + arr.length; i += 0x40) {
     const chunk  = arr.slice(i - start, i - start + 0x40);
     await eeprom_write(appStore.connectPort, i, chunk, chunk.length, appStore.configuration?.uart);
     const verify = await eeprom_read(appStore.connectPort, i, chunk.length, appStore.configuration?.uart);
-    if (!isEqual(chunk, verify)) { log(`${label} write error @ 0x${i.toString(16)}, retrying…`); i -= 0x40; continue; }
-    log(`${label} ${(((i-start)/arr.length)*100).toFixed(1)}%`);
+    if (!isEqual(chunk, verify)) { i -= 0x40; continue; }
+    const pct = (i - start + 0x40) / arr.length * 100;
+    await tickBar(`Writing ${name} to 0x${p5(i)}`, pct);
   }
 }
 
+// ── Full reconfigure ──────────────────────────────────────────────────────────
 async function writeAll() {
   if (!appStore.connectState) { alert(sessionStorage.getItem('noticeConnectK5')); return; }
-  if (!bl.value) { log('Bootloader binary not loaded.'); return; }
+  if (!bl.value) { setStatus('Bootloader binary not loaded.', 'error'); return; }
   const filled = rc.slots.filter((s: any) => s.firmware && !s.oversize);
-  if (!filled.length) { log('No valid firmware assigned to any slot.'); return; }
+  if (!filled.length) { setStatus('No valid firmware assigned to any slot.', 'error'); return; }
 
-  writing.value = true; state.status = '';
+  writing.value = true; statusMsg.value = '';
+  showBar(C_BL);
+
   try {
     const sz = await check_eeprom(appStore.connectPort, appStore.configuration?.uart);
     if (sz < 0x80000) { alert('Only 4Mbit (512 KB) EEPROM supported.'); writing.value = false; return; }
     await eeprom_init(appStore.connectPort);
 
-    log('--- Writing bootloader B ---');
-    await writeRange(BL_ADDR, bl.value, 'Bootloader');
+    await writeRangeWithProg(BL_ADDR, bl.value, 'bootloader');
 
     // Reset last-FW index so bootloader starts clean
     await eeprom_write(appStore.connectPort, 0x40002, new Uint8Array([0xFF]), 1, appStore.configuration?.uart);
 
-    // Metadata
-    await writeRange(META_BASE, new Uint8Array([filled.length]), 'FW count');
-    const blNameArr = new Uint8Array(8);
-    blNameArr.set(stringToUint8Array(blName.value.substring(0, 8)));
-    await writeRange(0x40008, blNameArr, 'BL name');
-
+    // Build metadata buffer
     const metaBuf: number[] = [];
     for (const slot of filled) {
       const pad = new Uint8Array(Math.ceil(slot.firmware.length / 0x40) * 0x40).fill(0xFF);
@@ -835,20 +1130,32 @@ async function writeAll() {
       endArr.set(hexReverseStringToUint8Array((slot.start + pad.length - 1).toString(16)));
       metaBuf.push(...nameArr, ...startArr, ...endArr, ...new Uint8Array(8));
     }
-    log('--- Writing slot metadata ---');
-    await writeRange(0x40020, new Uint8Array(metaBuf), 'Metadata');
+    await eeprom_write(appStore.connectPort, META_BASE, new Uint8Array([filled.length]), 1, appStore.configuration?.uart);
+    const blNameArr = new Uint8Array(8);
+    blNameArr.set(stringToUint8Array(blName.value.substring(0, 8)));
+    await eeprom_write(appStore.connectPort, 0x40008, blNameArr, 8, appStore.configuration?.uart);
 
-    for (const slot of filled) {
-      log(`--- Slot ${slot.index} "${slot.name}" @ 0x${slot.start.toString(16).toUpperCase()} ---`);
-      await writeRange(slot.start, slot._padded, slot.name || `Slot${slot.index}`);
-      await clearConfigSlot(slot.index);
+    prog.color = '#607D8B';
+    await writeRangeWithProg(0x40020, new Uint8Array(metaBuf), 'metadata');
+
+    for (let fi = 0; fi < filled.length; fi++) {
+      const slot  = filled[fi];
+      const blIdx = fi + 1;                              // bootloader now_menu = position in filled
+      const color = PALETTE[(slot.index - 1) % PALETTE.length];
+      prog.color  = color;
+      await writeRangeWithProg(slot.start, slot._padded, slot.name || `Slot${slot.index}`);
+      await clearConfigSlotWithProg(blIdx, color);
     }
 
-    log('--- Done! Rebooting… ---');
+    // Inject calibration into every config slot (uploaded file or live device).
+    const calibData = await getCalibData();
+    if (calibData) await writeCalibToAllSlots(calibData, filled.length);
+
+    await tickBar('Done', 100);
+    setStatus('Flash complete.', 'success');
     await eeprom_reboot(appStore.connectPort);
     fullReconfig.value = false;
-    await readDevice();
-  } catch (e: any) { log('Error: ' + errMsg(e)); }
+  } catch (e: any) { setStatus('Error: ' + errMsg(e), 'error'); hideBar(); }
   writing.value = false;
 }
 </script>
@@ -956,5 +1263,63 @@ export default { name: 'BL' };
 }
 .fill-inner {
   height: 100%; border-radius: 3px; transition: width 0.3s;
+}
+
+/* Progress area */
+.progress-area {
+  margin-top: 12px;
+  padding: 14px 16px;
+  background: var(--color-bg-3);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.status-msg {
+  font-size: 0.85rem;
+  padding: 6px 10px;
+  border-radius: 4px;
+  background: var(--color-bg-2);
+  color: var(--color-text-2);
+  &.error   { background: #fff1f0; color: #cf1322; border: 1px solid #ffa39e; }
+  &.success { background: #f6ffed; color: #389e0d; border: 1px solid #b7eb8f; }
+}
+
+.prog-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.prog-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 0.82rem;
+}
+
+.prog-name {
+  color: var(--color-text-2);
+  font-weight: 500;
+}
+
+.prog-pct {
+  color: var(--color-text-3);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.prog-track {
+  height: 8px;
+  background: var(--color-fill-2);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.prog-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.15s ease-out;
 }
 </style>

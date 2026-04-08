@@ -198,7 +198,7 @@ async function readSlots() {
   if (appStore.configuration?.uart !== 'losehu') {
     log('ERROR: This tool requires the losehu bootloader to be running.');
     log('Power off the radio, hold the MENU button, then power on to enter bootloader mode.');
-    log('Then reconnect in k5web — it should show version "L_BL003".');
+    log('Then reconnect in k5web — it should show version "L_BL014".');
     return;
   }
   state.reading = true;
